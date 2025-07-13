@@ -2912,7 +2912,7 @@ func (c *client) processInboundLeafMsg(msg []byte) {
 		if len(c.pa.mapped) > 0 && len(c.pa.queues) == 0 {
 			flag |= pmrIgnoreEmptyQueueFilter
 		}
-		_, qnames = c.processMsgResults(acc, r, msg, nil, c.pa.subject, c.pa.reply, flag)
+		_ = c.processMsgResults(acc, r, msg, nil, c.pa.subject, c.pa.reply, flag, "")
 	}
 
 	// Now deal with gateways

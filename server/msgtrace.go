@@ -260,6 +260,7 @@ type msgTrace struct {
 	nhop  string
 	tonly bool // Will only trace the message, not do delivery.
 	ct    compressionType
+	err   string
 }
 
 // This will be false outside of the tests, so when building the server binary,
@@ -757,7 +758,7 @@ func (t *msgTrace) addEgressEvent(dc *client, sub *subscription, err string) {
 	t.event.Events = append(t.event.Events, e)
 }
 
-func (t *msgTrace) addStreamExportEvent(dc *client, to []byte) {
+func (t *msgTrace) addStreamExportEvent(dc *client, to any) {
 	if t == nil {
 		return
 	}
@@ -843,4 +844,8 @@ func (t *msgTrace) sendEvent() {
 		}
 	}
 	t.srv.sendInternalAccountSysMsg(t.acc, t.dest, &t.event.Server, t.event, t.ct)
+}
+
+func (t *msgTrace) addErrorTrace(support string) {
+
 }

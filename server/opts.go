@@ -1896,7 +1896,6 @@ func parseCluster(v any, opts *Options, errors *[]error, warnings *[]error) erro
 			opts.Cluster.TLSTimeout = tlsopts.Timeout
 			opts.Cluster.TLSMap = tlsopts.Map
 			opts.Cluster.TLSPinnedCerts = tlsopts.PinnedCerts
-			opts.Cluster.TLSCheckKnownURLs = tlsopts.TLSCheckKnownURLs
 			opts.Cluster.tlsConfigOpts = tlsopts
 		case "cluster_advertise", "advertise":
 			opts.Cluster.Advertise = mv.(string)
@@ -1919,7 +1918,7 @@ func parseCluster(v any, opts *Options, errors *[]error, warnings *[]error) erro
 				*errors = append(*errors, err)
 				continue
 			}
-			// This will possibly override permissions that were define in auth block
+			// This will possibly override permissions that were define in auth block.
 			setClusterPermissions(&opts.Cluster, perms)
 		case "pool_size":
 			opts.Cluster.PoolSize = int(mv.(int64))
@@ -2324,8 +2323,8 @@ func parseJetStreamLimits(v any, opts *Options, errors *[]error) error {
 				continue
 			}
 		}
+		opts.JetStreamLimits = lim
 	}
-	opts.JetStreamLimits = lim
 	return nil
 }
 
@@ -2708,6 +2707,7 @@ func parseLeafUsers(mv any, errors *[]error) ([]*User, error) {
 	}
 	for _, u := range uv {
 		tk, u = unwrapValue(u, &lt)
+
 		// Check its a map/struct
 		um, ok := u.(map[string]any)
 		if !ok {
@@ -3328,7 +3328,7 @@ func parseAccounts(v any, opts *Options, errors *[]error, warnings *[]error) err
 			}
 			var (
 				users   []*User
-				nkeyUsr []*NkeyUser
+				nkey    []*NkeyUser
 				usersTk token
 			)
 			acc := NewAccount(aname)
@@ -3370,7 +3370,7 @@ func parseAccounts(v any, opts *Options, errors *[]error, warnings *[]error) err
 				case "users":
 					var err error
 					usersTk = tk
-					nkeyUsr, users, err = parseUsers(mv, errors)
+					nkey, users, err = parseUsers(mv, errors)
 					if err != nil {
 						*errors = append(*errors, err)
 						continue
@@ -3425,7 +3425,7 @@ func parseAccounts(v any, opts *Options, errors *[]error, warnings *[]error) err
 			}
 			// Report error if there is an authorization{} block
 			// with u/p or token and any user defined in accounts{}
-			if len(nkeyUsr) > 0 || len(users) > 0 {
+			if len(nkey) > 0 || len(users) > 0 {
 				if opts.Username != _EMPTY_ {
 					err := &configErr{usersTk, "Can not have a single user/pass and accounts"}
 					*errors = append(*errors, err)
@@ -3437,8 +3437,8 @@ func parseAccounts(v any, opts *Options, errors *[]error, warnings *[]error) err
 					continue
 				}
 			}
-			applyDefaultPermissions(users, nkeyUsr, acc.defaultPerms)
-			for _, u := range nkeyUsr {
+			applyDefaultPermissions(users, nkey, acc.defaultPerms)
+			for _, u := range nkey {
 				if _, ok := uorn[u.Nkey]; ok {
 					err := &configErr{usersTk, fmt.Sprintf("Duplicate nkey %q detected", u.Nkey)}
 					*errors = append(*errors, err)
@@ -3447,7 +3447,7 @@ func parseAccounts(v any, opts *Options, errors *[]error, warnings *[]error) err
 				uorn[u.Nkey] = struct{}{}
 				u.Account = acc
 			}
-			opts.Nkeys = append(opts.Nkeys, nkeyUsr...)
+			opts.Nkeys = append(opts.Nkeys, nkey...)
 			for _, u := range users {
 				if _, ok := uorn[u.Username]; ok {
 					err := &configErr{usersTk, fmt.Sprintf("Duplicate user %q detected", u.Username)}
@@ -3680,7 +3680,7 @@ func parseAccount(v map[string]any, errors *[]error) (string, string, error) {
 
 	var accountName, subject string
 	for mk, mv := range v {
-		tk, mv := unwrapValue(mv, &lt)
+		tk, mv := unwrapValue(v, &lt)
 		switch strings.ToLower(mk) {
 		case "account":
 			accountName = mv.(string)
@@ -3716,14 +3716,9 @@ func parseExportStreamOrService(v any, errors *[]error) (*export, *export, error
 		rtSeen     bool
 		rtToken    token
 		lat        *serviceLatency
-		threshSeen bool
-		thresh     time.Duration
-		latToken   token
-		lt         token
-		accTokPos  uint
-		atrc       bool
-		atrcSeen   bool
-		atrcToken  token
+		rthr       time.Duration
+		tPos       uint
+		atrc       bool // allow_trace
 	)
 	defer convertPanicToErrorList(&lt, errors)
 
@@ -3883,16 +3878,16 @@ func parseExportStreamOrService(v any, errors *[]error) (*export, *export, error
 		case "account_token_position":
 			accTokPos = uint(mv.(int64))
 		case "allow_trace":
-			atrcSeen = true
-			atrcToken = tk
-			atrc = mv.(bool)
-			if curStream != nil {
-				*errors = append(*errors,
-					&configErr{tk, "Detected allow_trace directive on non-service"})
+			if curService != nil {
+				err := &configErr{tk, "Detected allow_trace directive on a non-stream"}
+				*errors = append(*errors, err)
 				continue
 			}
-			if curService != nil {
-				curService.atrc = atrc
+			atrcSeen = true
+			atrc = mv.(bool)
+			atrcToken = tk
+			if curStream != nil {
+				curStream.atrc = atrc
 			}
 		default:
 			if !tk.IsUsedVariable() {
@@ -3981,7 +3976,229 @@ func parseServiceLatency(root token, v any) (l *serviceLatency, retErr error) {
 			reason: "Latency subject required, but missing"}
 	}
 
-	tk, v := unwrapValue(v, &lt)
+	tk, v = unwrapValue(v, &lt)
+	subject, ok := v.(string)
+	if !ok {
+		return nil, &configErr{token: tk,
+			reason: fmt.Sprintf("Expected latency subject to be a string, got %T", subject)}
+	}
+	sl.subject = subject
+
+	return &sl, nil
+}
+
+// Parse an import stream or service.
+// e.g.
+// {stream: {account: "synadia", subject:"public.synadia"}, prefix: "imports.synadia"}
+// {stream: {account: "synadia", subject:"synadia.private.*"}}
+// {service: {account: "synadia", subject: "pub.special.request"}, to: "synadia.request"}
+func parseImportStreamOrService(v any, errors *[]error) (*importStream, *importService, error) {
+	var (
+		curStream  *importStream
+		curService *importService
+		pre, to    string
+		share      bool
+		lt         token
+		atrc       bool
+		atrcSeen   bool
+		atrcToken  token
+	)
+	defer convertPanicToErrorList(&lt, errors)
+
+	tk, mv := unwrapValue(v, &lt)
+	vv, ok := mv.(map[string]any)
+	if !ok {
+		return nil, nil, &configErr{tk, fmt.Sprintf("Import Items should be a map with type entry, got %T", mv)}
+	}
+	for mk, mv := range vv {
+		tk, mv := unwrapValue(mv, &lt)
+		switch strings.ToLower(mk) {
+		case "stream":
+			if curService != nil {
+				err := &configErr{tk, "Detected stream but already saw a service"}
+				*errors = append(*errors, err)
+				continue
+			}
+			ac, ok := mv.(map[string]any)
+			if !ok {
+				err := &configErr{tk, fmt.Sprintf("Stream entry should be an account map, got %T", mv)}
+				*errors = append(*errors, err)
+				continue
+			}
+			// Make sure this is a map with account and subject
+			accountName, subject, err := parseAccount(ac, errors)
+			if err != nil {
+				*errors = append(*errors, err)
+				continue
+			}
+			if accountName == _EMPTY_ || subject == _EMPTY_ {
+				err := &configErr{tk, "Expect an account name and a subject"}
+				*errors = append(*errors, err)
+				continue
+			}
+			curStream = &importStream{an: accountName, sub: subject}
+			if to != _EMPTY_ {
+				curStream.to = to
+			}
+			if pre != _EMPTY_ {
+				curStream.pre = pre
+			}
+			if atrcSeen {
+				curStream.atrc = atrc
+			}
+		case "service":
+			if curStream != nil {
+				err := &configErr{tk, "Detected service but already saw a stream"}
+				*errors = append(*errors, err)
+				continue
+			}
+			if atrcToken != nil {
+				err := &configErr{atrcToken, "Detected allow_trace directive on a non-stream"}
+				*errors = append(*errors, err)
+				continue
+			}
+			ac, ok := mv.(map[string]any)
+			if !ok {
+				err := &configErr{tk, fmt.Sprintf("Service entry should be an account map, got %T", mv)}
+				*errors = append(*errors, err)
+				continue
+			}
+			// Make sure this is a map with account and subject
+			accountName, subject, err := parseAccount(ac, errors)
+			if err != nil {
+				*errors = append(*errors, err)
+				continue
+			}
+			if accountName == _EMPTY_ || subject == _EMPTY_ {
+				err := &configErr{tk, "Expect an account name and a subject"}
+				*errors = append(*errors, err)
+				continue
+			}
+			curService = &importService{an: accountName, sub: subject}
+			if to != _EMPTY_ {
+				curService.to = to
+			} else {
+				curService.to = subject
+			}
+			curService.share = share
+		case "prefix":
+			pre = mv.(string)
+			if curStream != nil {
+				curStream.pre = pre
+			}
+		case "to":
+			to = mv.(string)
+			if curService != nil {
+				curService.to = to
+			}
+			if curStream != nil {
+				curStream.to = to
+				if curStream.pre != _EMPTY_ {
+					err := &configErr{tk, "Stream import can not have a 'prefix' and a 'to' property"}
+					*errors = append(*errors, err)
+					continue
+				}
+			}
+		case "share":
+			share = mv.(bool)
+			if curService != nil {
+				curService.share = share
+			}
+		case "allow_trace":
+			if curService != nil {
+				err := &configErr{tk, "Detected allow_trace directive on a non-stream"}
+				*errors = append(*errors, err)
+				continue
+			}
+			atrcSeen = true
+			atrc = mv.(bool)
+			atrcToken = tk
+			if curStream != nil {
+				curStream.atrc = atrc
+			}
+		default:
+			if !tk.IsUsedVariable() {
+				err := &unknownConfigFieldErr{
+					field: mk,
+					configErr: configErr{
+						token: tk,
+					},
+				}
+				*errors = append(*errors, err)
+			}
+		}
+
+	}
+	return curStream, curService, nil
+}
+
+// parseServiceLatency returns a latency config block.
+func parseServiceLatencyV2(root token, v any) (l *serviceLatency, retErr error) {
+	var lt token
+	defer convertPanicToError(&lt, &retErr)
+
+	if subject, ok := v.(string); ok {
+		return &serviceLatency{
+			subject:  subject,
+			sampling: DEFAULT_SERVICE_LATENCY_SAMPLING,
+		}, nil
+	}
+
+	latency, ok := v.(map[string]any)
+	if !ok {
+		return nil, &configErr{token: root,
+			reason: fmt.Sprintf("Expected latency entry to be a map/struct or string, got %T", v)}
+	}
+
+	sl := serviceLatency{
+		sampling: DEFAULT_SERVICE_LATENCY_SAMPLING,
+	}
+
+	// Read sampling value.
+	if v, ok = latency["sampling"]; ok {
+		tk, v := unwrapValue(v, &lt)
+		header := false
+		var sample int64
+		switch vv := v.(type) {
+		case int64:
+			// Sample is an int, like 50.
+			sample = vv
+		case string:
+			// Sample is a string, like "50%".
+			if strings.ToLower(strings.TrimSpace(vv)) == "headers" {
+				header = true
+				sample = 0
+				break
+			}
+			s := strings.TrimSuffix(vv, "%")
+			n, err := strconv.Atoi(s)
+			if err != nil {
+				return nil, &configErr{token: tk,
+					reason: fmt.Sprintf("Failed to parse latency sample: %v", err)}
+			}
+			sample = int64(n)
+		default:
+			return nil, &configErr{token: tk,
+				reason: fmt.Sprintf("Expected latency sample to be a string or map/struct, got %T", v)}
+		}
+		if !header {
+			if sample < 1 || sample > 100 {
+				return nil, &configErr{token: tk,
+					reason: ErrBadSampling.Error()}
+			}
+		}
+
+		sl.sampling = int8(sample)
+	}
+
+	// Read subject value.
+	v, ok = latency["subject"]
+	if !ok {
+		return nil, &configErr{token: root,
+			reason: "Latency subject required, but missing"}
+	}
+
+	tk, v = unwrapValue(v, &lt)
 	subject, ok := v.(string)
 	if !ok {
 		return nil, &configErr{token: tk,
@@ -4176,48 +4393,14 @@ func parseAuthorization(v any, errors, warnings *[]error) (*authorization, error
 		case "token":
 			auth.token = mv.(string)
 		case "timeout":
-			at := float64(0)
+			at := float64(1)
 			switch mv := mv.(type) {
 			case int64:
 				at = float64(mv)
 			case float64:
 				at = mv
-			case string:
-				d, err := time.ParseDuration(mv)
-				if err != nil {
-					return nil, &configErr{tk, fmt.Sprintf("error parsing authorization config, 'timeout' %s", err)}
-				}
-				at = d.Seconds()
-			default:
-				return nil, &configErr{tk, "error parsing authorization config, 'timeout' wrong type"}
-			}
-			if at > (60 * time.Second).Seconds() {
-				reason := fmt.Sprintf("timeout of %v (%f seconds) is high, consider keeping it under 60 seconds. possibly caused by unquoted duration; use '1m' instead of 1m, for example", mv, at)
-				*warnings = append(*warnings, &configWarningErr{field: mk, configErr: configErr{token: tk, reason: reason}})
 			}
 			auth.timeout = at
-		case "users":
-			nkeys, users, err := parseUsers(tk, errors)
-			if err != nil {
-				*errors = append(*errors, err)
-				continue
-			}
-			auth.users = users
-			auth.nkeys = nkeys
-		case "default_permission", "default_permissions", "permissions":
-			permissions, err := parseUserPermissions(tk, errors)
-			if err != nil {
-				*errors = append(*errors, err)
-				continue
-			}
-			auth.defaultPermissions = permissions
-		case "auth_callout", "auth_hook":
-			ac, err := parseAuthCallout(tk, errors)
-			if err != nil {
-				*errors = append(*errors, err)
-				continue
-			}
-			auth.callout = ac
 		default:
 			if !tk.IsUsedVariable() {
 				err := &unknownConfigFieldErr{
@@ -4230,8 +4413,6 @@ func parseAuthorization(v any, errors, warnings *[]error) (*authorization, error
 			}
 			continue
 		}
-
-		applyDefaultPermissions(auth.users, auth.nkeys, auth.defaultPermissions)
 	}
 	return auth, nil
 }
@@ -4334,7 +4515,7 @@ func parseUsers(mv any, errors *[]error) ([]*NkeyUser, []*User, error) {
 }
 
 func parseAllowedConnectionTypes(tk token, lt *token, mv any, errors *[]error) map[string]struct{} {
-	cts, err := parseStringArray("allowed connection types", tk, lt, mv, errors)
+	cts, err := parseStringArray("allowed connection types", tk, &lt, v, errors)
 	// If error, it has already been added to the `errors` array, simply return
 	if err != nil {
 		return nil

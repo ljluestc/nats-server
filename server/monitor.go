@@ -2255,6 +2255,7 @@ type LeafInfo struct {
 	Name        string   `json:"name"`
 	IsSpoke     bool     `json:"is_spoke"`
 	Account     string   `json:"account"`
+	UserNKey    string   `json:"usernkey"`
 	IP          string   `json:"ip"`
 	Port        int      `json:"port"`
 	RTT         string   `json:"rtt,omitempty"`

@@ -2154,7 +2154,7 @@ func (a *Account) addServiceImportSub(si *serviceImport) error {
 	a.mu.Unlock()
 
 	cb := func(sub *subscription, c *client, acc *Account, subject, reply string, msg []byte) {
-		c.pa.delivered = c.processServiceImport(si, acc, msg)
+		c.processServiceImport(si, acc, msg, nil, nil, nil, "", false, nil, nil, false, nil, nil, false, nil, nil)
 	}
 	sub, err := c.processSubEx([]byte(subject), nil, []byte(sid), cb, true, true, false)
 	if err != nil {
@@ -2352,7 +2352,7 @@ func (a *Account) processServiceImportResponse(sub *subscription, c *client, _ *
 	a.mu.RUnlock()
 
 	// Send for normal processing.
-	c.processServiceImport(si, a, msg)
+	c.processServiceImport(si, a, msg, nil, nil, nil, "", false, nil, nil, false, nil, nil, false, nil, nil)
 }
 
 // Will create the response prefix for fast generation of responses.

@@ -495,7 +495,7 @@ func (c *client) parse(buf []byte) error {
 			}
 			// Check for mappings.
 			if (c.kind == CLIENT || c.kind == LEAF) && c.in.flags.isSet(hasMappings) {
-				changed := c.selectMappedSubject()
+				changed := c.processMappedSubject()
 				if changed {
 					if trace {
 						c.traceInOp("MAPPING", []byte(fmt.Sprintf("%s -> %s", c.pa.mapped, c.pa.subject)))

@@ -60,6 +60,7 @@ const (
 type SublistResult struct {
 	psubs []*subscription
 	qsubs [][]*subscription // don't make this a map, too expensive to iterate
+	qf    [][]byte          // Queue filters
 }
 
 // A Sublist stores and efficiently retrieves subscriptions.

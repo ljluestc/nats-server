@@ -964,7 +964,7 @@ func testAuthCalloutScopedUser(t *testing.T, allowAnyAccount bool) {
 	// is signed with the account signing key
 	nc := ac.Connect(nats.UserCredentials(creds), nats.Token(scopedToken))
 
-	resp, err = nc.Request(userDirectInfoSubj, nil, time.Second)
+	resp, err := nc.Request(userDirectInfoSubj, nil, time.Second)
 	require_NoError(t, err)
 	response = ServerAPIResponse{Data: &UserInfo{}}
 	err = json.Unmarshal(resp.Data, &response)
@@ -1082,6 +1082,9 @@ func TestAuthCalloutOperatorModeEncryption(t *testing.T) {
 	tkp, tpub := createKey(t)
 	accClaim := jwt.NewAccountClaims(tpub)
 	accClaim.Name = "TEST"
+	accClaim.SigningKeys.Add(tSigningPub)
+	scope, scopedKp := newScopedRole(t, "foo", []string{"foo.>", "$SYS.REQ.USER.INFO"}, []string{"foo.>", "_INBOX.>"}, true)
+	accClaim.SigningKeys.AddScopedSigner(scope)
 	accJwt, err := accClaim.Encode(oKp)
 	require_NoError(t, err)
 
@@ -1755,7 +1758,7 @@ func TestAuthCalloutOperator_AnyAccount(t *testing.T) {
 	// Bearer token etc..
 	// This is used by all users, and the customization will be in other connect args.
 	// This needs to also be bound to the authorization account.
-	creds = createBasicAccountUser(t, ckp)
+	creds = createBasicAccountUser(t, akp)
 	defer removeFile(t, creds)
 
 	// We require a token.
@@ -1993,6 +1996,9 @@ func TestOperatorModeUserRevocation(t *testing.T) {
 	tkp, tpub := createKey(t)
 	accClaim := jwt.NewAccountClaims(tpub)
 	accClaim.Name = "TEST"
+	accClaim.SigningKeys.Add(tSigningPub)
+	scope, scopedKp := newScopedRole(t, "foo", []string{"foo.>", "$SYS.REQ.USER.INFO"}, []string{"foo.>", "_INBOX.>"}, false)
+	accClaim.SigningKeys.AddScopedSigner(scope)
 	accJwt, err := accClaim.Encode(oKp)
 	require_NoError(t, err)
 
@@ -2204,7 +2210,7 @@ func TestAuthCalloutLeafNodeAndOperatorMode(t *testing.T) {
 	handler := func(m *nats.Msg) {
 		user, si, _, opts, _ := decodeAuthRequest(t, m.Data)
 		if (opts.Username == "leaf" && opts.Password == "pwd") || (opts.Token == "token") {
-			ujwt := createAuthUser(t, user, "user_a", apk, "", akp, 0, nil)
+			ujwt := createAuthUser(t, user, _EMPTY_, "A", "", nil, 0, nil)
 			m.Respond(serviceResponse(t, user, si.ID, ujwt, "", 0))
 		} else {
 			m.Respond(nil)
